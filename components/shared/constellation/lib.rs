@@ -16,7 +16,7 @@ use std::fmt;
 use std::time::Duration;
 
 use base::cross_process_instant::CrossProcessInstant;
-use base::id::{MessagePortId, PipelineId, WebViewId};
+use base::id::{BrowsingContextId, MessagePortId, PipelineId, WebViewId};
 use compositing_traits::largest_contentful_paint_candidate::LargestContentfulPaintType;
 use embedder_traits::{
     CompositorHitTestResult, EmbedderControlId, EmbedderControlResponse, InputEventAndId,
@@ -35,6 +35,19 @@ pub use structured_data::*;
 use strum_macros::IntoStaticStr;
 use webrender_api::units::LayoutVector2D;
 use webrender_api::{ExternalScrollId, ImageKey};
+
+/// Information about a browsing context (frame)
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BrowsingContextInfo {
+    /// Unique identifier for this browsing context
+    pub id: BrowsingContextId,
+    /// Pipeline ID for this context
+    pub pipeline_id: Option<PipelineId>,
+    /// Parent browsing context (None for top-level)
+    pub parent_id: Option<BrowsingContextId>,
+    /// URL of this context
+    pub url: ServoUrl,
+}
 
 /// Messages to the Constellation from the embedding layer, whether from `ServoRenderer` or
 /// from `libservo` itself.
@@ -111,6 +124,12 @@ pub enum EmbedderToConstellationMessage {
     RequestScreenshotReadiness(WebViewId),
     /// A response to a request to show an embedder user interface control.
     EmbedderControlResponse(EmbedderControlId, EmbedderControlResponse),
+
+    /// Enumerate all browsing contexts for a WebView
+    EnumerateBrowsingContexts(WebViewId, IpcSender<Vec<BrowsingContextInfo>>),
+
+    /// Evaluate JavaScript in a specific browsing context (frame)
+    EvaluateJavaScriptInContext(BrowsingContextId, JavaScriptEvaluationId, String),
 }
 
 /// A description of a paint metric that is sent from the Servo renderer to the

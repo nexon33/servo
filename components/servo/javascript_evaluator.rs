@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use base::id::WebViewId;
+use base::id::{BrowsingContextId, WebViewId};
 use constellation_traits::EmbedderToConstellationMessage;
 use embedder_traits::{JSValue, JavaScriptEvaluationError, JavaScriptEvaluationId};
 use rustc_hash::FxHashMap;
@@ -43,6 +43,23 @@ impl JavaScriptEvaluator {
         self.constellation_proxy
             .send(EmbedderToConstellationMessage::EvaluateJavaScript(
                 webview_id,
+                evaluation_id,
+                script,
+            ));
+        self.pending_evaluations
+            .insert(evaluation_id, PendingEvaluation { callback });
+    }
+
+    pub(crate) fn evaluate_in_context(
+        &mut self,
+        context_id: BrowsingContextId,
+        script: String,
+        callback: Box<dyn FnOnce(Result<JSValue, JavaScriptEvaluationError>)>,
+    ) {
+        let evaluation_id = self.generate_id();
+        self.constellation_proxy
+            .send(EmbedderToConstellationMessage::EvaluateJavaScriptInContext(
+                context_id,
                 evaluation_id,
                 script,
             ));
