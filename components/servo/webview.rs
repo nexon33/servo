@@ -7,10 +7,12 @@ use std::hash::Hash;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
-use base::id::WebViewId;
+use base::id::{BrowsingContextId, WebViewId};
 use compositing::IOCompositor;
 use compositing_traits::WebViewTrait;
-use constellation_traits::{EmbedderToConstellationMessage, TraversalDirection};
+use constellation_traits::{
+    BrowsingContextInfo, EmbedderToConstellationMessage, TraversalDirection,
+};
 use dpi::PhysicalSize;
 use embedder_traits::{
     ContextMenuAction, ContextMenuItem, Cursor, EmbedderControlId, EmbedderControlRequest, Image,
@@ -621,18 +623,14 @@ impl WebView {
     /// Enumerate all browsing contexts (frames) in this WebView
     pub fn enumerate_browsing_contexts(
         &self,
-        callback: impl FnOnce(Vec<BrowsingContextInfo>) + 'static,
+        callback: impl FnOnce(Vec<BrowsingContextInfo>) + Send + 'static,
     ) {
         use ipc_channel::ipc;
         let (sender, receiver) = ipc::channel().unwrap();
 
-        self.inner()
-            .constellation_proxy
-            .send(EmbedderToConstellationMessage::EnumerateBrowsingContexts(
-                self.id(),
-                sender,
-            ))
-            .unwrap();
+        self.inner().constellation_proxy.send(
+            EmbedderToConstellationMessage::EnumerateBrowsingContexts(self.id(), sender),
+        );
 
         std::thread::spawn(move || {
             if let Ok(contexts) = receiver.recv() {
@@ -648,11 +646,10 @@ impl WebView {
         script: T,
         callback: impl FnOnce(Result<JSValue, JavaScriptEvaluationError>) + 'static,
     ) {
-        self.inner().javascript_evaluator.borrow_mut().evaluate_in_context(
-            context_id,
-            script.to_string(),
-            Box::new(callback),
-        );
+        self.inner()
+            .javascript_evaluator
+            .borrow_mut()
+            .evaluate_in_context(context_id, script.to_string(), Box::new(callback));
     }
 
     /// Asynchronously take a screenshot of the [`WebView`] contents, given a `rect` or the whole

@@ -38,6 +38,7 @@ headers = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
+hyper-proxy = { workspace = true }
 hyper-rustls = { workspace = true }
 hyper-util = { workspace = true }
 hyper_serde = { workspace = true }

@@ -194,6 +194,14 @@ fn create_http_states(
         base::read_json_from_file(&mut cookie_jar, config_dir, "cookie_jar.json");
     }
 
+    // Check for proxy configuration from environment variables
+    let proxy_config = std::env::var("HTTP_PROXY")
+        .ok()
+        .map(|url| crate::connector::ProxyConfig {
+            proxy_url: Some(url),
+            session_id: None,
+        });
+
     let override_manager = CertificateErrorOverrideManager::new();
     let http_state = HttpState {
         hsts_list: RwLock::new(hsts_list),
@@ -202,11 +210,14 @@ fn create_http_states(
         history_states: RwLock::new(FxHashMap::default()),
         http_cache: RwLock::new(http_cache),
         http_cache_state: Mutex::new(HashMap::new()),
-        client: create_http_client(create_tls_config(
-            ca_certificates.clone(),
-            ignore_certificate_errors,
-            override_manager.clone(),
-        )),
+        client: create_http_client(
+            create_tls_config(
+                ca_certificates.clone(),
+                ignore_certificate_errors,
+                override_manager.clone(),
+            ),
+            proxy_config.clone(),
+        ),
         override_manager,
         embedder_proxy: Mutex::new(embedder_proxy.clone()),
     };
@@ -219,11 +230,14 @@ fn create_http_states(
         history_states: RwLock::new(FxHashMap::default()),
         http_cache: RwLock::new(HttpCache::default()),
         http_cache_state: Mutex::new(HashMap::new()),
-        client: create_http_client(create_tls_config(
-            ca_certificates,
-            ignore_certificate_errors,
-            override_manager.clone(),
-        )),
+        client: create_http_client(
+            create_tls_config(
+                ca_certificates,
+                ignore_certificate_errors,
+                override_manager.clone(),
+            ),
+            proxy_config,
+        ),
         override_manager,
         embedder_proxy: Mutex::new(embedder_proxy),
     };

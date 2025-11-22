@@ -117,12 +117,13 @@ use compositing_traits::{
     WebRenderExternalImageRegistry,
 };
 use constellation_traits::{
-    AuxiliaryWebViewCreationRequest, AuxiliaryWebViewCreationResponse, DocumentState,
-    EmbedderToConstellationMessage, IFrameLoadInfo, IFrameLoadInfoWithData, IFrameSizeMsg, Job,
-    LoadData, LogEntry, MessagePortMsg, NavigationHistoryBehavior, PaintMetricEvent,
-    PortMessageTask, PortTransferInfo, SWManagerMsg, SWManagerSenders, ScreenshotReadinessResponse,
-    ScriptToConstellationChan, ScriptToConstellationMessage, ServiceWorkerManagerFactory,
-    ServiceWorkerMsg, StructuredSerializedData, TraversalDirection, WindowSizeType,
+    AuxiliaryWebViewCreationRequest, AuxiliaryWebViewCreationResponse, BrowsingContextInfo,
+    DocumentState, EmbedderToConstellationMessage, IFrameLoadInfo, IFrameLoadInfoWithData,
+    IFrameSizeMsg, Job, LoadData, LogEntry, MessagePortMsg, NavigationHistoryBehavior,
+    PaintMetricEvent, PortMessageTask, PortTransferInfo, SWManagerMsg, SWManagerSenders,
+    ScreenshotReadinessResponse, ScriptToConstellationChan, ScriptToConstellationMessage,
+    ServiceWorkerManagerFactory, ServiceWorkerMsg, StructuredSerializedData, TraversalDirection,
+    WindowSizeType,
 };
 use content_security_policy::sandboxing_directive::SandboxingFlagSet;
 use crossbeam_channel::{Receiver, Select, Sender, unbounded};
@@ -1559,6 +1560,56 @@ where
             EmbedderToConstellationMessage::EmbedderControlResponse(id, response) => {
                 self.handle_embedder_control_response(id, response);
             },
+            EmbedderToConstellationMessage::EvaluateJavaScriptInContext(
+                browsing_context_id,
+                evaluation_id,
+                script,
+            ) => {
+                self.handle_evaluate_javascript_in_context(
+                    browsing_context_id,
+                    evaluation_id,
+                    script,
+                );
+            },
+            EmbedderToConstellationMessage::EnumerateBrowsingContexts(webview_id, sender) => {
+                self.handle_enumerate_browsing_contexts(webview_id, sender);
+            },
+        }
+    }
+
+    #[servo_tracing::instrument(skip_all)]
+    fn handle_evaluate_javascript_in_context(
+        &mut self,
+        browsing_context_id: BrowsingContextId,
+        evaluation_id: JavaScriptEvaluationId,
+        script: String,
+    ) {
+        let Some(pipeline) = self
+            .browsing_contexts
+            .get(&browsing_context_id)
+            .and_then(|browsing_context| self.pipelines.get(&browsing_context.pipeline_id))
+        else {
+            self.handle_finish_javascript_evaluation(
+                evaluation_id,
+                Err(JavaScriptEvaluationError::InternalError),
+            );
+            return;
+        };
+
+        if pipeline
+            .event_loop
+            .send(ScriptThreadMessage::EvaluateJavaScript(
+                pipeline.webview_id, // Use the pipeline's webview_id
+                pipeline.id,
+                evaluation_id,
+                script,
+            ))
+            .is_err()
+        {
+            self.handle_finish_javascript_evaluation(
+                evaluation_id,
+                Err(JavaScriptEvaluationError::InternalError),
+            );
         }
     }
 
@@ -1597,6 +1648,36 @@ where
                 Err(JavaScriptEvaluationError::InternalError),
             );
         }
+    }
+
+    fn handle_enumerate_browsing_contexts(
+        &self,
+        webview_id: WebViewId,
+        sender: IpcSender<Vec<BrowsingContextInfo>>,
+    ) {
+        let infos = self
+            .browsing_contexts
+            .values()
+            .filter(|bc| bc.webview_id == webview_id)
+            .map(|bc| {
+                let url = self
+                    .pipelines
+                    .get(&bc.pipeline_id)
+                    .map(|p| p.url.clone())
+                    .unwrap_or_else(|| ServoUrl::parse("about:blank").unwrap());
+
+                BrowsingContextInfo {
+                    id: bc.id,
+                    pipeline_id: Some(bc.pipeline_id),
+                    parent_id: bc
+                        .parent_pipeline_id
+                        .and_then(|pid| self.pipelines.get(&pid).map(|p| p.browsing_context_id)),
+                    url,
+                }
+            })
+            .collect();
+
+        let _ = sender.send(infos);
     }
 
     #[servo_tracing::instrument(skip_all)]
@@ -2209,8 +2290,8 @@ where
                         entangled_with: entry.entangled_with,
                     }
                 },
-                TransferState::CompletionFailed(buffer) |
-                TransferState::CompletionRequested(_, buffer) => {
+                TransferState::CompletionFailed(buffer)
+                | TransferState::CompletionRequested(_, buffer) => {
                     // If the completion had already failed,
                     // this is a request coming from a global to complete a new transfer,
                     // but we're still awaiting the return of the buffer
@@ -2375,8 +2456,8 @@ where
         if let Some(info) = self.message_ports.get_mut(&port2) {
             info.entangled_with = None;
             match &mut info.state {
-                TransferState::Managed(router_id) |
-                TransferState::CompletionInProgress(router_id) => {
+                TransferState::Managed(router_id)
+                | TransferState::CompletionInProgress(router_id) => {
                     // We try to disentangle the other port now,
                     // and if it has been transfered out by the time the message is received,
                     // it will be ignored,
@@ -4484,18 +4565,18 @@ where
                     "ScriptCommand after closure",
                 );
             },
-            WebDriverCommandMsg::CloseWebView(..) |
-            WebDriverCommandMsg::NewWebView(..) |
-            WebDriverCommandMsg::FocusWebView(..) |
-            WebDriverCommandMsg::IsWebViewOpen(..) |
-            WebDriverCommandMsg::GetWindowRect(..) |
-            WebDriverCommandMsg::GetViewportSize(..) |
-            WebDriverCommandMsg::SetWindowRect(..) |
-            WebDriverCommandMsg::MaximizeWebView(..) |
-            WebDriverCommandMsg::LoadUrl(..) |
-            WebDriverCommandMsg::Refresh(..) |
-            WebDriverCommandMsg::InputEvent(..) |
-            WebDriverCommandMsg::TakeScreenshot(..) => {
+            WebDriverCommandMsg::CloseWebView(..)
+            | WebDriverCommandMsg::NewWebView(..)
+            | WebDriverCommandMsg::FocusWebView(..)
+            | WebDriverCommandMsg::IsWebViewOpen(..)
+            | WebDriverCommandMsg::GetWindowRect(..)
+            | WebDriverCommandMsg::GetViewportSize(..)
+            | WebDriverCommandMsg::SetWindowRect(..)
+            | WebDriverCommandMsg::MaximizeWebView(..)
+            | WebDriverCommandMsg::LoadUrl(..)
+            | WebDriverCommandMsg::Refresh(..)
+            | WebDriverCommandMsg::InputEvent(..)
+            | WebDriverCommandMsg::TakeScreenshot(..) => {
                 unreachable!("This command should be send directly to the embedder.");
             },
             _ => {
@@ -4812,8 +4893,9 @@ where
             .focused_webview()
             .map(|(_, webview)| webview.focused_browsing_context_id);
         focused_browsing_context_id.is_some_and(|focus_ctx_id| {
-            focus_ctx_id == browsing_context_id ||
-                self.fully_active_descendant_browsing_contexts_iter(browsing_context_id)
+            focus_ctx_id == browsing_context_id
+                || self
+                    .fully_active_descendant_browsing_contexts_iter(browsing_context_id)
                     .any(|nested_ctx| nested_ctx.id == focus_ctx_id)
         })
     }
@@ -5425,8 +5507,8 @@ where
                     if self
                         .pending_changes
                         .iter()
-                        .any(|change| change.new_pipeline_id == pipeline.id) &&
-                        probability <= rng.random::<f32>()
+                        .any(|change| change.new_pipeline_id == pipeline.id)
+                        && probability <= rng.random::<f32>()
                     {
                         // We tend not to close pending pipelines, as that almost always
                         // results in pipelines being closed early in their lifecycle,

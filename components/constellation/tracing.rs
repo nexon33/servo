@@ -82,6 +82,8 @@ mod from_compositor {
                 },
                 Self::RequestScreenshotReadiness(..) => target!("RequestScreenshotReadiness"),
                 Self::EmbedderControlResponse(..) => target!("EmbedderControlResponse"),
+                Self::EnumerateBrowsingContexts(..) => target!("EnumerateBrowsingContexts"),
+                Self::EvaluateJavaScriptInContext(..) => target!("EvaluateJavaScriptInContext"),
             }
         }
     }

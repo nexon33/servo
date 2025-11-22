@@ -4,18 +4,19 @@
 
 use std::collections::hash_map::HashMap;
 use std::convert::TryFrom;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use futures::Future;
 use futures::task::{Context, Poll};
-use http::uri::{Authority, Uri as Destination};
+use http::uri::{Authority, Scheme, Uri as Destination};
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::rt::Executor;
 use hyper_rustls::HttpsConnector as HyperRustlsHttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector as HyperHttpConnector;
-use log::warn;
+use log::{info, warn};
 use rustls::client::WebPkiServerVerifier;
 use rustls::{ClientConfig, RootCertStore};
 use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
@@ -26,9 +27,19 @@ use crate::hosts::replace_host;
 
 pub const BUF_SIZE: usize = 32768;
 
+/// Proxy configuration for HTTP client
+#[derive(Clone, Debug)]
+pub struct ProxyConfig {
+    /// Proxy URL (e.g., "http://127.0.0.1:8888" for MITM proxy)
+    pub proxy_url: Option<String>,
+    /// Session ID to include in X-Session-ID header for session-based routing
+    pub session_id: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct ServoHttpConnector {
     inner: HyperHttpConnector,
+    proxy_uri: Option<Destination>,
 }
 
 impl ServoHttpConnector {
@@ -36,43 +47,128 @@ impl ServoHttpConnector {
         let mut inner = HyperHttpConnector::new();
         inner.enforce_http(false);
         inner.set_happy_eyeballs_timeout(None);
-        ServoHttpConnector { inner }
+        ServoHttpConnector {
+            inner,
+            proxy_uri: None,
+        }
+    }
+
+    fn with_proxy(proxy_url: &str) -> Result<ServoHttpConnector, String> {
+        let mut inner = HyperHttpConnector::new();
+        inner.enforce_http(false);
+        inner.set_happy_eyeballs_timeout(None);
+
+        let proxy_uri = proxy_url
+            .parse::<Destination>()
+            .map_err(|e| format!("Invalid proxy URL: {}", e))?;
+
+        Ok(ServoHttpConnector {
+            inner,
+            proxy_uri: Some(proxy_uri),
+        })
     }
 }
 
 impl Service<Destination> for ServoHttpConnector {
     type Response = <HyperHttpConnector as Service<Destination>>::Response;
-    type Error = <HyperHttpConnector as Service<Destination>>::Error;
-    type Future = <HyperHttpConnector as Service<Destination>>::Future;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&mut self, dest: Destination) -> Self::Future {
-        // Perform host replacement when making the actual TCP connection.
-        let mut new_dest = dest.clone();
-        let mut parts = dest.into_parts();
+        let mut inner = self.inner.clone();
+        let proxy_uri = self.proxy_uri.clone();
 
-        if let Some(auth) = parts.authority {
-            let host = auth.host();
-            let host = replace_host(host);
+        Box::pin(async move {
+            // If proxy is configured, connect to proxy instead of destination
+            if let Some(ref proxy) = proxy_uri {
+                info!("Routing request to {} through proxy {}", dest, proxy);
 
-            let authority = if let Some(port) = auth.port() {
-                format!("{}:{}", host, port.as_str())
-            } else {
-                (*host).to_string()
-            };
+                // Connect to the proxy server
+                let mut stream = inner
+                    .call(proxy.clone())
+                    .await
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-            if let Ok(authority) = Authority::from_maybe_shared(authority) {
-                parts.authority = Some(authority);
-                if let Ok(dest) = Destination::from_parts(parts) {
-                    new_dest = dest
+                // If destination is HTTPS, we need to establish a CONNECT tunnel
+                if dest.scheme() == Some(&http::uri::Scheme::HTTPS) {
+                    let host = dest.host().unwrap_or("");
+                    let port = dest.port_u16().unwrap_or(443);
+
+                    let connect_req = format!(
+                        "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\n\r\n",
+                        host, port, host, port
+                    );
+
+                    // Send CONNECT request
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    // Access the inner TcpStream which implements Tokio's AsyncRead/AsyncWrite
+                    stream
+                        .inner_mut()
+                        .write_all(connect_req.as_bytes())
+                        .await
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+                    // Read response
+                    let mut buf = [0u8; 4096];
+                    let n = stream
+                        .inner_mut()
+                        .read(&mut buf)
+                        .await
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+                    let response = String::from_utf8_lossy(&buf[..n]);
+                    if !response.starts_with("HTTP/1.1 200")
+                        && !response.starts_with("HTTP/1.0 200")
+                    {
+                        return Err(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!(
+                                "Proxy CONNECT failed: {}",
+                                response.lines().next().unwrap_or("Unknown")
+                            ),
+                        ))
+                            as Box<dyn std::error::Error + Send + Sync>);
+                    }
+
+                    info!("CONNECT tunnel established to {}", dest);
                 }
-            }
-        }
 
-        self.inner.call(new_dest)
+                Ok(stream)
+            } else {
+                // Perform host replacement when making the actual TCP connection.
+                let mut new_dest = dest.clone();
+                let mut parts = dest.into_parts();
+
+                if let Some(auth) = parts.authority {
+                    let host = auth.host();
+                    let host = replace_host(host);
+
+                    let authority = if let Some(port) = auth.port() {
+                        format!("{}:{}", host, port.as_str())
+                    } else {
+                        (*host).to_string()
+                    };
+
+                    if let Ok(authority) = Authority::from_maybe_shared(authority) {
+                        parts.authority = Some(authority);
+                        if let Ok(dest) = Destination::from_parts(parts) {
+                            new_dest = dest
+                        }
+                    }
+                }
+
+                inner
+                    .call(new_dest)
+                    .await
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+            }
+        })
     }
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Ok(()).into()
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner
+            .poll_ready(cx)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 }
 
@@ -268,13 +364,45 @@ impl rustls::client::danger::ServerCertVerifier for CertificateVerificationOverr
 
 pub type BoxedBody = BoxBody<Bytes, hyper::Error>;
 
-pub fn create_http_client(tls_config: TlsConfig) -> Client<Connector, BoxedBody> {
+pub fn create_http_client(
+    tls_config: TlsConfig,
+    proxy_config: Option<ProxyConfig>,
+) -> Client<Connector, BoxedBody> {
+    // Create base HTTP connector with optional proxy support
+    let base_connector = if let Some(ref config) = proxy_config {
+        if let Some(ref proxy_url) = config.proxy_url {
+            info!("Servo HTTP client configured with proxy: {}", proxy_url);
+            if let Some(ref session_id) = config.session_id {
+                info!("  Session ID: {}", session_id);
+            }
+
+            match ServoHttpConnector::with_proxy(proxy_url) {
+                Ok(connector) => {
+                    info!("✓ Proxy connector created successfully");
+                    connector
+                },
+                Err(e) => {
+                    warn!(
+                        "Failed to create proxy connector: {}. Using direct connection.",
+                        e
+                    );
+                    ServoHttpConnector::new()
+                },
+            }
+        } else {
+            ServoHttpConnector::new()
+        }
+    } else {
+        ServoHttpConnector::new()
+    };
+
+    // Wrap with HTTPS/TLS support
     let connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls_config)
         .https_or_http()
         .enable_http1()
         .enable_http2()
-        .wrap_connector(ServoHttpConnector::new());
+        .wrap_connector(base_connector);
 
     Client::builder(TokioExecutor {})
         .http1_title_case_headers(true)
