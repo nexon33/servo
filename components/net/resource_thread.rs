@@ -197,9 +197,12 @@ fn create_http_states(
     // Check for proxy configuration from environment variables
     let proxy_config = std::env::var("HTTP_PROXY")
         .ok()
-        .map(|url| crate::connector::ProxyConfig {
-            proxy_url: Some(url),
-            session_id: None,
+        .map(|url| {
+            log::info!("🔄 Servo HTTP client: Proxy detected from HTTP_PROXY environment variable: {}", url);
+            crate::connector::ProxyConfig {
+                proxy_url: Some(url),
+                session_id: None,
+            }
         });
 
     let override_manager = CertificateErrorOverrideManager::new();
