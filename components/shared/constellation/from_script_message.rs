@@ -122,6 +122,8 @@ pub struct LoadData {
     /// The "creation sandboxing flag set" that this Pipeline should use when it is created.
     /// See <https://html.spec.whatwg.org/multipage/#determining-the-creation-sandboxing-flags>.
     pub creation_sandboxing_flag_set: SandboxingFlagSet,
+    /// Optional proxy configuration for this specific load/WebView
+    pub proxy_config: Option<net_traits::proxy_config::ProxyConfig>,
 }
 
 /// The result of evaluating a javascript scheme url.
@@ -166,6 +168,7 @@ impl LoadData {
             has_trustworthy_ancestor_origin,
             destination: Destination::Document,
             creation_sandboxing_flag_set,
+            proxy_config: None,
         }
     }
 

@@ -81,7 +81,12 @@ pub enum EmbedderToConstellationMessage {
     /// A log entry, with the top-level browsing context id and thread name
     LogEntry(Option<WebViewId>, Option<String>, LogEntry),
     /// Create a new top level browsing context.
-    NewWebView(ServoUrl, WebViewId, ViewportDetails),
+    NewWebView(
+        ServoUrl,
+        WebViewId,
+        ViewportDetails,
+        Option<net_traits::proxy_config::ProxyConfig>,
+    ),
     /// Close a top level browsing context.
     CloseWebView(WebViewId),
     /// Panic a top level browsing context.

@@ -483,6 +483,8 @@ pub struct RequestBuilder {
     pub response_tainting: ResponseTainting,
     /// Servo internal: if crash details are present, trigger a crash error page with these details.
     pub crash: Option<String>,
+    /// Optional proxy configuration for this specific request/WebView
+    pub proxy_config: Option<crate::proxy_config::ProxyConfig>,
 }
 
 impl RequestBuilder {
@@ -520,6 +522,7 @@ impl RequestBuilder {
             https_state: HttpsState::None,
             response_tainting: ResponseTainting::Basic,
             crash: None,
+            proxy_config: None,
         }
     }
 
@@ -639,6 +642,11 @@ impl RequestBuilder {
 
     pub fn crash(mut self, crash: Option<String>) -> Self {
         self.crash = crash;
+        self
+    }
+
+    pub fn proxy_config(mut self, proxy_config: Option<crate::proxy_config::ProxyConfig>) -> Self {
+        self.proxy_config = proxy_config;
         self
     }
 
@@ -806,6 +814,8 @@ pub struct Request {
     pub https_state: HttpsState,
     /// Servo internal: if crash details are present, trigger a crash error page with these details.
     pub crash: Option<String>,
+    /// Optional proxy configuration for this specific request/WebView
+    pub proxy_config: Option<crate::proxy_config::ProxyConfig>,
 }
 
 impl Request {
@@ -854,6 +864,7 @@ impl Request {
             has_trustworthy_ancestor_origin: false,
             https_state,
             crash: None,
+            proxy_config: None,
         }
     }
 
@@ -886,11 +897,11 @@ impl Request {
     pub fn is_navigation_request(&self) -> bool {
         matches!(
             self.destination,
-            Destination::Document |
-                Destination::Embed |
-                Destination::Frame |
-                Destination::IFrame |
-                Destination::Object
+            Destination::Document
+                | Destination::Embed
+                | Destination::Frame
+                | Destination::IFrame
+                | Destination::Object
         )
     }
 
@@ -898,16 +909,16 @@ impl Request {
     pub fn is_subresource_request(&self) -> bool {
         matches!(
             self.destination,
-            Destination::Audio |
-                Destination::Font |
-                Destination::Image |
-                Destination::Manifest |
-                Destination::Script |
-                Destination::Style |
-                Destination::Track |
-                Destination::Video |
-                Destination::Xslt |
-                Destination::None
+            Destination::Audio
+                | Destination::Font
+                | Destination::Image
+                | Destination::Manifest
+                | Destination::Script
+                | Destination::Style
+                | Destination::Track
+                | Destination::Video
+                | Destination::Xslt
+                | Destination::None
         )
     }
 
@@ -1035,9 +1046,9 @@ pub fn is_cors_safelisted_request_content_type(value: &[u8]) -> bool {
     match value_mime_result {
         Err(_) => false, // step 3
         Ok(value_mime) => match (value_mime.type_(), value_mime.subtype()) {
-            (mime::APPLICATION, mime::WWW_FORM_URLENCODED) |
-            (mime::MULTIPART, mime::FORM_DATA) |
-            (mime::TEXT, mime::PLAIN) => true,
+            (mime::APPLICATION, mime::WWW_FORM_URLENCODED)
+            | (mime::MULTIPART, mime::FORM_DATA)
+            | (mime::TEXT, mime::PLAIN) => true,
             _ => false, // step 4
         },
     }

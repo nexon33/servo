@@ -805,6 +805,7 @@ pub struct WebViewBuilder<'servo> {
     url: Option<Url>,
     size: Option<PhysicalSize<u32>>,
     hidpi_scale_factor: Scale<f32, DeviceIndependentPixel, DevicePixel>,
+    proxy_config: Option<net_traits::proxy_config::ProxyConfig>,
 }
 
 impl<'servo> WebViewBuilder<'servo> {
@@ -816,6 +817,7 @@ impl<'servo> WebViewBuilder<'servo> {
             size: None,
             hidpi_scale_factor: Scale::new(1.0),
             delegate: Rc::new(DefaultWebViewDelegate),
+            proxy_config: None,
         }
     }
 
@@ -845,6 +847,11 @@ impl<'servo> WebViewBuilder<'servo> {
         hidpi_scale_factor: Scale<f32, DeviceIndependentPixel, DevicePixel>,
     ) -> Self {
         self.hidpi_scale_factor = hidpi_scale_factor;
+        self
+    }
+
+    pub fn proxy(mut self, proxy_config: Option<net_traits::proxy_config::ProxyConfig>) -> Self {
+        self.proxy_config = proxy_config;
         self
     }
 

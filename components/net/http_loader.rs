@@ -809,7 +809,22 @@ async fn obtain_response(
         let headers = headers.clone();
         let is_secure_scheme = url.is_secure_scheme();
 
-        client
+        // Extract session ID from headers if present
+        let session_id = request
+            .headers()
+            .get("X-Session-ID")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+
+        eprintln!("[HTTP_LOADER] Request to: {}", request.uri());
+        eprintln!("[HTTP_LOADER] Extracted X-Session-ID from headers: {:?}", session_id);
+        if session_id.is_some() {
+            eprintln!("[HTTP_LOADER] ✓ Setting SESSION_ID task_local to: {:?}", session_id);
+        } else {
+            eprintln!("[HTTP_LOADER] ✗ WARNING: No X-Session-ID header found in request");
+        }
+
+        let fut = client
             .request(request)
             .and_then(move |res| {
                 let send_end = CrossProcessInstant::now();
@@ -860,8 +875,10 @@ async fn obtain_response(
                     &error,
                     override_manager.remove_certificate_failing_verification(host.as_str()),
                 )
-            })
-            .await
+            });
+
+        // Run the request future within the session ID scope
+        crate::connector::SESSION_ID.scope(session_id, fut).await
     }
 }
 

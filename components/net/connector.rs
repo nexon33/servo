@@ -69,6 +69,10 @@ impl ServoHttpConnector {
     }
 }
 
+tokio::task_local! {
+    pub static SESSION_ID: Option<String>;
+}
+
 impl Service<Destination> for ServoHttpConnector {
     type Response = <HyperHttpConnector as Service<Destination>>::Response;
     type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -82,6 +86,7 @@ impl Service<Destination> for ServoHttpConnector {
             // If proxy is configured, connect to proxy instead of destination
             if let Some(ref proxy) = proxy_uri {
                 info!("Routing request to {} through proxy {}", dest, proxy);
+                eprintln!("[CONNECTOR] Routing request to {} through proxy {}", dest, proxy);
 
                 // Connect to the proxy server
                 let mut stream = inner
@@ -94,10 +99,25 @@ impl Service<Destination> for ServoHttpConnector {
                     let host = dest.host().unwrap_or("");
                     let port = dest.port_u16().unwrap_or(443);
 
-                    let connect_req = format!(
-                        "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\n\r\n",
-                        host, port, host, port
-                    );
+                    eprintln!("[CONNECTOR] HTTPS destination detected: {}:{}", host, port);
+                    
+                    // Check for session ID in task-local storage
+                    let session_id_result = SESSION_ID.try_with(|id| id.clone());
+                    eprintln!("[CONNECTOR] SESSION_ID task_local result: {:?}", session_id_result);
+                    
+                    let connect_req = if let Ok(Some(session_id)) = session_id_result {
+                        eprintln!("[CONNECTOR] ✓ Injecting X-Session-ID: '{}' into CONNECT", session_id);
+                        format!(
+                            "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\nX-Session-ID: {}\r\n\r\n",
+                            host, port, host, port, session_id
+                        )
+                    } else {
+                        eprintln!("[CONNECTOR] ✗ WARNING: No session ID available for HTTPS CONNECT");
+                        format!(
+                            "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\n\r\n",
+                            host, port, host, port
+                        )
+                    };
 
                     // Send CONNECT request
                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
