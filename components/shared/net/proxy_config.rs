@@ -4,11 +4,12 @@
 
 //! Proxy configuration types
 
+use malloc_size_of_derive::MallocSizeOf;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Proxy authentication credentials
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
 pub struct ProxyAuth {
     /// Username for proxy authentication
     pub username: String,
@@ -17,7 +18,7 @@ pub struct ProxyAuth {
 }
 
 /// Proxy configuration for a WebView or browsing context
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
 pub struct ProxyConfig {
     /// Proxy server URL (e.g., "http://proxy.com:8080", "socks5://proxy.com:1080")
     pub server: String,
