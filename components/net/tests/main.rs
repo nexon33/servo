@@ -158,6 +158,7 @@ fn create_http_state(fc: Option<EmbedderProxy>) -> HttpState {
             ),
             None, // No proxy for tests
         ),
+        client_pool: Mutex::new(FxHashMap::default()),
         override_manager,
         embedder_proxy: Mutex::new(fc.unwrap_or_else(|| create_embedder_proxy())),
     }

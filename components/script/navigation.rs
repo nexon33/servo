@@ -212,7 +212,8 @@ impl InProgressLoad {
         .body(self.load_data.data.clone())
         .redirect_mode(RedirectMode::Manual)
         .origin(self.origin.immutable().clone())
-        .crash(self.load_data.crash.clone());
+        .crash(self.load_data.crash.clone())
+        .proxy_config(self.load_data.proxy_config.clone());
         request_builder.url_list = self.url_list.clone();
 
         if !request_builder.headers.contains_key(header::ACCEPT) {

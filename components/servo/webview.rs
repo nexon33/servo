@@ -176,6 +176,7 @@ impl WebView {
                     url.into(),
                     webview.id(),
                     viewport_details,
+                    builder.proxy_config.clone(),
                 ));
         }
 

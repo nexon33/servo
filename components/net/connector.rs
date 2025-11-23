@@ -24,17 +24,9 @@ use tower_service::Service;
 
 use crate::async_runtime::spawn_task;
 use crate::hosts::replace_host;
+use net_traits::proxy_config::ProxyConfig;
 
 pub const BUF_SIZE: usize = 32768;
-
-/// Proxy configuration for HTTP client
-#[derive(Clone, Debug)]
-pub struct ProxyConfig {
-    /// Proxy URL (e.g., "http://127.0.0.1:8888" for MITM proxy)
-    pub proxy_url: Option<String>,
-    /// Session ID to include in X-Session-ID header for session-based routing
-    pub session_id: Option<String>,
-}
 
 #[derive(Clone)]
 pub struct ServoHttpConnector {
@@ -390,27 +382,26 @@ pub fn create_http_client(
 ) -> Client<Connector, BoxedBody> {
     // Create base HTTP connector with optional proxy support
     let base_connector = if let Some(ref config) = proxy_config {
-        if let Some(ref proxy_url) = config.proxy_url {
-            info!("Servo HTTP client configured with proxy: {}", proxy_url);
-            if let Some(ref session_id) = config.session_id {
-                info!("  Session ID: {}", session_id);
-            }
+        info!("Servo HTTP client configured with proxy: {}", config.server);
+        if let Some(ref auth) = config.auth {
+            info!("  Proxy authentication: {}:***", auth.username);
+        }
+        if !config.bypass_list.is_empty() {
+            info!("  Bypass list: {:?}", config.bypass_list);
+        }
 
-            match ServoHttpConnector::with_proxy(proxy_url) {
-                Ok(connector) => {
-                    info!("✓ Proxy connector created successfully");
-                    connector
-                },
-                Err(e) => {
-                    warn!(
-                        "Failed to create proxy connector: {}. Using direct connection.",
-                        e
-                    );
-                    ServoHttpConnector::new()
-                },
-            }
-        } else {
-            ServoHttpConnector::new()
+        match ServoHttpConnector::with_proxy(&config.server) {
+            Ok(connector) => {
+                info!("✓ Proxy connector created successfully");
+                connector
+            },
+            Err(e) => {
+                warn!(
+                    "Failed to create proxy connector: {}. Using direct connection.",
+                    e
+                );
+                ServoHttpConnector::new()
+            },
         }
     } else {
         ServoHttpConnector::new()

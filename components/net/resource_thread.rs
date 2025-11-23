@@ -199,10 +199,7 @@ fn create_http_states(
         .ok()
         .map(|url| {
             log::info!("🔄 Servo HTTP client: Proxy detected from HTTP_PROXY environment variable: {}", url);
-            crate::connector::ProxyConfig {
-                proxy_url: Some(url),
-                session_id: None,
-            }
+            net_traits::proxy_config::ProxyConfig::new(url)
         });
 
     let override_manager = CertificateErrorOverrideManager::new();
@@ -221,6 +218,7 @@ fn create_http_states(
             ),
             proxy_config.clone(),
         ),
+        client_pool: Mutex::new(FxHashMap::default()),
         override_manager,
         embedder_proxy: Mutex::new(embedder_proxy.clone()),
     };
@@ -241,6 +239,7 @@ fn create_http_states(
             ),
             proxy_config,
         ),
+        client_pool: Mutex::new(FxHashMap::default()),
         override_manager,
         embedder_proxy: Mutex::new(embedder_proxy),
     };

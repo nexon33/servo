@@ -1416,8 +1416,8 @@ where
             },
             // Create a new top level browsing context. Will use response_chan to return
             // the browsing context id.
-            EmbedderToConstellationMessage::NewWebView(url, webview_id, viewport_details) => {
-                self.handle_new_top_level_browsing_context(url, webview_id, viewport_details);
+            EmbedderToConstellationMessage::NewWebView(url, webview_id, viewport_details, proxy_config) => {
+                self.handle_new_top_level_browsing_context(url, webview_id, viewport_details, proxy_config);
             },
             // Close a top level browsing context.
             EmbedderToConstellationMessage::CloseWebView(webview_id) => {
@@ -3080,10 +3080,12 @@ where
         url: ServoUrl,
         webview_id: WebViewId,
         viewport_details: ViewportDetails,
+        proxy_config: Option<net_traits::proxy_config::ProxyConfig>,
     ) {
         let pipeline_id = PipelineId::new();
         let browsing_context_id = BrowsingContextId::from(webview_id);
-        let load_data = LoadData::new_for_new_unrelated_webview(url);
+        let mut load_data = LoadData::new_for_new_unrelated_webview(url);
+        load_data.proxy_config = proxy_config;
         let is_private = false;
         let throttled = false;
 

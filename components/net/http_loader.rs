@@ -108,6 +108,9 @@ pub struct HttpState {
     pub auth_cache: RwLock<AuthCache>,
     pub history_states: RwLock<FxHashMap<HistoryStateId, Vec<u8>>>,
     pub client: Client<Connector, crate::connector::BoxedBody>,
+    /// Pool of HTTP clients keyed by proxy configuration.
+    /// Enables per-WebView proxy support without cross-contamination.
+    pub client_pool: Mutex<FxHashMap<Option<net_traits::proxy_config::ProxyConfig>, StdArc<Client<Connector, crate::connector::BoxedBody>>>>,
     pub override_manager: CertificateErrorOverrideManager,
     pub embedder_proxy: Mutex<EmbedderProxy>,
 }
@@ -151,6 +154,36 @@ impl HttpState {
             ipc_sender,
         ));
         ipc_receiver.recv().ok()?
+    }
+
+    /// Get or create an HTTP client for the given proxy configuration.
+    /// Clients are pooled to avoid cross-contamination between different proxy settings.
+    pub(crate) fn get_client_for_proxy(
+        &self,
+        proxy_config: &Option<net_traits::proxy_config::ProxyConfig>,
+    ) -> StdArc<Client<Connector, crate::connector::BoxedBody>> {
+        let mut pool = self.client_pool.lock().unwrap();
+
+        // Check if client already exists in pool
+        if let Some(client) = pool.get(proxy_config) {
+            return client.clone();
+        }
+
+        // Create new client with this proxy configuration
+        info!("Creating new HTTP client for proxy config: {:?}", proxy_config);
+        let tls_config = create_tls_config(
+            crate::connector::CACertificates::Default,
+            false,
+            self.override_manager.clone(),
+        );
+        let client = StdArc::new(crate::connector::create_http_client(
+            tls_config,
+            proxy_config.clone(),
+        ));
+
+        // Store in pool and return
+        pool.insert(proxy_config.clone(), client.clone());
+        client
     }
 }
 
@@ -2081,8 +2114,10 @@ async fn http_network_fetch(
             (Decoder::detect(response, url.is_secure_scheme()), None)
         },
         _ => {
+            // Get the appropriate HTTP client for this request's proxy configuration
+            let client = context.state.get_client_for_proxy(&request.proxy_config);
             let response_future = obtain_response(
-                &context.state.client,
+                &client,
                 &url,
                 &request.method,
                 &mut request.headers,
